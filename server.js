@@ -1,55 +1,42 @@
 const express = require('express');
 const axios = require('axios');
-const { factory } = require('wasmoon');
 const app = express();
 app.use(express.json());
 
 app.post('/spy', async (req, res) => {
     let scriptContent = req.body.script;
+
+    // 1. Fetch if it's a URL
     if (scriptContent.startsWith("http")) {
         try {
             const response = await axios.get(scriptContent);
             scriptContent = response.data;
-        } catch (e) { return res.json({ status: 500, data: "Could not fetch URL." }); }
+        } catch (e) {
+            return res.json({ status: 200, data: "❌ Error: Could not fetch link." });
+        }
     }
 
-    try {
-        const lua = await factory();
-        let interceptedLinks = [];
+    // 2. Patterns that match typical logging/webhook functions
+    // This looks for: syn.request, http_request, HttpPost, and webhook URLs
+    const patterns = [
+        /(https?:\/\/[^\s"']+discord[^\s"']+)/gi, // Discord Webhooks
+        /(https?:\/\/[^\s"']+webhook[^\s"']+)/gi, // Generic Webhooks
+        /(syn\.request|http_request|HttpPost|HttpGet|request)\s*\([^\)]*\)/gi // Hook functions
+    ];
 
-        // This is the function that captures the requests
-        lua.global.set('log_request', (method, url) => {
-            interceptedLinks.push(`[${method}] ${url}`);
-        });
+    let found = [];
+    patterns.forEach(regex => {
+        let matches = scriptContent.match(regex);
+        if (matches) found.push(...matches);
+    });
 
-        // MOCKING: Define the Roblox functions so the script doesn't crash
-        const mockEnv = `
-            local function log(method, url) log_request(method, url) end
-            game = { GetService = function(self, name) return {} end }
-            function game:HttpGet(url) log("GET", url) return "" end
-            function game:HttpPost(url, data) log("POST", url) return "" end
-            
-            local function req(options)
-                local method = (type(options) == "table" and options.Method) or "GET"
-                local url = (type(options) == "table" and options.Url) or options or "unknown"
-                log(method, url)
-                return { StatusCode = 200, Body = "", Headers = {} }
-            end
-            
-            request = req
-            http_request = req
-            syn = { request = req }
-            fluxus = { request = req }
-            krnl = { request = req }
-            delta = { request = req }
-        `;
-
-        await lua.doString(mockEnv + "\n" + scriptContent);
-        res.json({ status: 200, data: interceptedLinks.length > 0 ? interceptedLinks.join("\n") : "No HTTP requests found." });
-    } catch (err) {
-        res.json({ status: 500, data: "Error: " + err.message });
+    // 3. Return results
+    if (found.length > 0) {
+        res.json({ status: 200, data: "⚠️ Potential malicious patterns found:\n" + [...new Set(found)].join("\n") });
+    } else {
+        res.json({ status: 200, data: "✅ No suspicious network calls found." });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`API active`));
+app.listen(PORT, () => console.log(`Scanner active on port ${PORT}`));
