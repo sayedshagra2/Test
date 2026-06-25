@@ -1,42 +1,56 @@
 const express = require('express');
 const axios = require('axios');
+const { LuaFactory } = require('wasmoon');
 const app = express();
 app.use(express.json());
 
 app.post('/spy', async (req, res) => {
     let scriptContent = req.body.script;
-
-    // 1. Fetch if it's a URL
+    
     if (scriptContent.startsWith("http")) {
         try {
             const response = await axios.get(scriptContent);
             scriptContent = response.data;
-        } catch (e) {
-            return res.json({ status: 200, data: "❌ Error: Could not fetch link." });
-        }
+        } catch (e) { return res.json({ status: 500, data: "❌ Fetch Error" }); }
     }
 
-    // 2. Patterns that match typical logging/webhook functions
-    // This looks for: syn.request, http_request, HttpPost, and webhook URLs
-    const patterns = [
-        /(https?:\/\/[^\s"']+discord[^\s"']+)/gi, // Discord Webhooks
-        /(https?:\/\/[^\s"']+webhook[^\s"']+)/gi, // Generic Webhooks
-        /(syn\.request|http_request|HttpPost|HttpGet|request)\s*\([^\)]*\)/gi // Hook functions
-    ];
+    try {
+        const factory = new LuaFactory();
+        const lua = await factory.createEngine();
+        let intercepted = [];
 
-    let found = [];
-    patterns.forEach(regex => {
-        let matches = scriptContent.match(regex);
-        if (matches) found.push(...matches);
-    });
+        // Define a global function that the Lua script can call to "log" a request
+        const log = (method, url) => intercepted.push(`[${method}] ${url}`);
+        
+        // Expose this to Lua
+        lua.global.set('log', log);
 
-    // 3. Return results
-    if (found.length > 0) {
-        res.json({ status: 200, data: "⚠️ Potential malicious patterns found:\n" + [...new Set(found)].join("\n") });
-    } else {
-        res.json({ status: 200, data: "✅ No suspicious network calls found." });
+        // Pre-define the Roblox environment
+        await lua.doString(`
+            game = { GetService = function(self, name) return {} end }
+            function game:HttpGet(u) log("GET", u) return "" end
+            function game:HttpPost(u, d) log("POST", u) return "" end
+            
+            local function r(o) 
+                local u = (type(o) == "string") and o or (o.Url or "unknown")
+                local m = (o.Method or "GET")
+                log(m, u)
+                return { StatusCode = 200, Body = "", Headers = {} }
+            end
+            
+            syn = { request = r }
+            http_request = r
+            request = r
+            fluxus = { request = r }
+        `);
+
+        await lua.doString(scriptContent);
+        
+        res.json({ status: 200, data: intercepted.length > 0 ? intercepted.join("\n") : "✅ No calls detected." });
+    } catch (err) {
+        res.json({ status: 200, data: "⚠️ Execution incomplete (likely obfuscated): " + err.message.substring(0, 50) });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Scanner active on port ${PORT}`));
+app.listen(PORT, () => console.log('API Active'));
