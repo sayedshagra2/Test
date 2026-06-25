@@ -1,0 +1,23 @@
+const express = require('express');
+const axios = require('axios'); // Add this!
+const { factory } = require('wasmoon');
+const app = express();
+app.use(express.json());
+
+app.post('/spy', async (req, res) => {
+    let scriptContent = req.body.script;
+    
+    // If the input is a URL, fetch the content
+    if (scriptContent.startsWith("http")) {
+        try {
+            const response = await axios.get(scriptContent);
+            scriptContent = response.data;
+        } catch (e) {
+            return res.json({ status: 500, data: "Could not fetch the URL." });
+        }
+    }
+
+    // ... (rest of your existing code from before)
+    // Run the scriptContent in the Lua VM
+    // ...
+});
