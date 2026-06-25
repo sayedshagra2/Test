@@ -1,0 +1,13 @@
+{
+  "name": "httpspy-api",
+  "version": "1.0.0",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.19.2",
+    "wasmoon": "^1.16.0",
+    "axios": "^1.7.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
